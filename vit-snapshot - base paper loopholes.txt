@@ -1,0 +1,181 @@
+VIT-SNAPSHOT NOTEBOOK — LOOPHOLE / BUG / RISK REPORT
+=====================================================
+File analyzed: vit-snapshot.ipynb (single monolithic code cell, 1126 lines)
+Reviewed: 2026-08-30
+
+This is a code + methodology audit. Items are grouped by severity.
+
+-------------------------------------------------------------------
+A. CRITICAL — METHODOLOGY FLAWS (affect validity of reported results)
+-------------------------------------------------------------------
+
+1. "Features" used for prototype/cosine-similarity classification are
+   actually the model's final classification logits, not embeddings.
+   - `vit_model.head` is replaced with `nn.Linear(num_features, num_classes)`.
+   - `extract_features()` calls `model(images)` directly, so the "features"
+     it returns are the 2-dimensional (num_classes-dim) logits from this
+     head, not the 384-dim ViT embedding.
+   - All downstream prototype computation, cosine similarity, snapshot
+     voting, and Dempster-Shafer fusion therefore operate on a 2-D logit
+     space instead of a real embedding space. This makes the "prototype
+     network" step largely redundant with the softmax classifier it is
+     built on top of, and defeats the purpose of few-shot metric learning
+     (which normally compares samples in a high-dimensional embedding
+     space extracted *before* the classification head).
+   - Fix: extract features from the penultimate layer / CLS token
+     (e.g. `vit_model.forward_features(x)`) instead of the replaced head.
+
+2. Full fine-tuning of a ~22M-parameter ViT-Small on a tiny 5-shot-per-class
+   support set (e.g. 10 images total for 2 classes) for 50 epochs, with no
+   backbone freezing, no weight decay, no dropout adjustment, and no early
+   stopping.
+   - Very high risk of severe overfitting; training accuracy is not a
+     meaningful signal here since the network can trivially memorize 10
+     images.
+   - Fix: freeze the backbone and fine-tune only the head/last few blocks,
+     add weight decay, and/or use a validation-based early-stopping
+     criterion.
+
+3. No fixed random seed anywhere (no `np.random.seed`, `torch.manual_seed`,
+   or `random.seed`).
+   - `create_support_and_query` uses `np.random.shuffle` on the global
+     RNG state, so the support/query split — and therefore all reported
+     accuracies — is different on every run. Results are not reproducible
+     and cannot be fairly compared across baseline vs. ensemble vs.
+     DS-hybrid methods (which all depend on the same split within one run,
+     but nothing ties results across different runs/publications).
+
+4. Query set and Test set are silently concatenated into one evaluation
+   pool in every evaluation function:
+       all_features = np.vstack((query_features, test_features))
+       all_labels   = np.hstack((query_labels, test_labels))
+   - `query_set` is carved out of `train_dataset` ("Train" folder) while
+     `test_dataset` is a separate ("Test" folder) split. Merging them into
+     a single accuracy figure conflates two different populations and
+     makes it impossible to separately report true held-out test
+     performance vs. in-domain query performance. This can inflate or
+     deflate the headline "accuracy" number depending on how the dataset
+     author split Train/Test.
+
+5. No class-order consistency check between `train_dataset.classes` and
+   `test_dataset.classes`. `ImageFolder` assigns label indices by
+   alphabetically sorting subfolder names independently for each dataset
+   instance. If folder naming/casing ever differs between the Train and
+   Test directories, class indices will silently mismatch and all
+   accuracy numbers will be wrong with no error raised.
+   - Fix: `assert train_dataset.classes == test_dataset.classes`.
+
+6. Accuracy is the only reported metric on what is very likely an
+   imbalanced binary medical dataset (BreakHis benign vs. malignant is
+   known to be class-imbalanced). No precision/recall/F1/AUC/confusion
+   matrix is computed, so the reported percentages can be misleading.
+
+-------------------------------------------------------------------
+B. CORRECTNESS / ROBUSTNESS BUGS
+-------------------------------------------------------------------
+
+7. Hyperparameter `batch_size = 32` is defined but never used — every
+   DataLoader (`support_loader`, `query_loader`, `test_loader`) is
+   hardcoded to `batch_size=1`. Dead/misleading configuration.
+
+8. `create_support_and_query()` iterates the *entire* dataset image-by-image
+   with `for idx, (_, label) in enumerate(dataset)` just to read labels.
+   This decodes and transforms every image (expensive: Resize+ToTensor on
+   the whole dataset) purely to build an index-to-label map.
+   `ImageFolder` already exposes this via `dataset.targets` / `dataset.samples`
+   with no image decoding required — this is a significant, easily avoidable
+   performance bug that scales badly with dataset size.
+
+9. Global-state mutation of `vit_model` across evaluation calls:
+   `evaluate_snapshot_ensemble()` and `evaluate_dempster_shafer_hybrid()`
+   both call `model_template.load_state_dict(snapshot)` in a loop, which
+   mutates the shared global `vit_model` in place. After these functions
+   return, `vit_model` silently holds the weights of whichever snapshot
+   was loaded *last* in the loop — not necessarily the fully-trained final
+   epoch's weights. In the current hyperparameters (num_epochs=50,
+   snapshot_interval=10) this happens to coincide with the final epoch's
+   weights by luck, but changing either hyperparameter will make the final
+   visualization phase silently run on stale/wrong weights with no
+   warning.
+
+10. `evaluate_snapshot_ensemble()` computes `all_labels = np.hstack((query_labels, test_labels))`
+    using `query_labels`/`test_labels` left over from the *last loop
+    iteration* over snapshots, relying on Python's lack of block scoping.
+    If `snapshots_to_use` were ever empty, this raises `NameError` on an
+    undefined variable. Fragile coding pattern — these should be computed
+    once, outside/before the per-snapshot loop.
+
+11. Redundant recomputation: features for every snapshot (query + test +
+    support, each requiring a full forward pass per image) are recomputed
+    from scratch independently in `evaluate_snapshot_ensemble` (called
+    twice — once for hard voting, once for soft voting) and again in
+    `evaluate_dempster_shafer_hybrid`. That's 3x the necessary forward
+    passes over the same snapshots/images. Should compute per-snapshot
+    probabilities once and reuse for hard voting, soft voting, and DS
+    fusion.
+
+12. `GradCAM` uses `register_backward_hook`, which is deprecated in modern
+    PyTorch and can silently produce incorrect gradients for modules with
+    multiple inputs/outputs. Should use `register_full_backward_hook`.
+
+13. `GradCAM` registers its forward/backward hooks in `__init__` and they
+    are never removed (`hook.remove()` is never called for either hook).
+    Since a new `GradCAM` instance is constructed each time
+    `visualize_query_predictions` runs, repeated calls would keep stacking
+    duplicate hooks on the same layer (not triggered in this notebook
+    since the function is only called once, but a latent leak).
+
+14. No internet/GPU/path failure handling: `data_dir` is a hardcoded
+    Kaggle-only absolute path
+    (`/kaggle/input/datasets/kartikmaity/.../Final 400X`). The notebook
+    cannot run anywhere except inside this specific Kaggle kernel
+    environment without manual editing.
+
+15. LIME's `predict_fn` classifies one perturbed image at a time in a
+    Python loop instead of batching the whole array through the model —
+    with `num_samples=500`, this means 500 sequential single-image forward
+    passes per LIME call, which is far slower than necessary.
+
+-------------------------------------------------------------------
+C. MINOR / CODE QUALITY
+-------------------------------------------------------------------
+
+16. Unused imports: `itertools` and `scipy.special.softmax` are imported
+    but never referenced anywhere in the notebook.
+
+17. `get_activation_map(..., target_layer_name='blocks.11')` hardcodes the
+    layer name for a 12-block ViT-Small. It has a fallback
+    (`model.blocks[-1].norm1`) if not found, but the hardcoded default
+    silently becomes wrong/meaningless if the backbone model is swapped
+    for one with a different depth/naming convention.
+
+18. `evaluate_dempster_shafer_hybrid()` reads the global `train_dataset`
+    directly instead of receiving `num_classes` as a parameter, coupling
+    the function to notebook global state and making it harder to reuse
+    or test in isolation.
+
+19. The Kaggle notebook metadata (`kaggle.dataSources`) declares TWO
+    attached dataset versions (datasetId 3732176 and datasetId 6560532),
+    but the code only ever references one dataset path
+    (`kartikmaity/breakhist-binary-classificationfew-shot`). The second
+    attached dataset appears completely unused in the executed code —
+    worth checking whether this indicates leftover/incomplete setup from
+    a prior experiment.
+
+20. The entire notebook was written as a single code cell with ASCII
+    banner comments (`# ===...`) used to mark sections instead of actual
+    notebook structure (separate cells / markdown headers). This makes it
+    impossible to re-run, debug, or inspect intermediate outputs
+    (support/query sizes, per-snapshot accuracy, etc.) without re-running
+    the entire pipeline, including a full 50-epoch training run, every
+    time. (Addressed by the accompanying BeyondBelief_SnapshotFusion_Benchmark.ipynb.)
+
+-------------------------------------------------------------------
+SUMMARY
+-------------------------------------------------------------------
+The most important issues to fix before trusting any reported numbers are
+A1 (features are logits, not embeddings — undermines the entire
+prototype/DS-fusion premise), A3 (no seed → irreproducible splits), and
+A4 (query+test accuracy conflated into one number). B9/B10 (shared mutable
+model state, leaked loop variables) are the kind of bugs that will bite
+if hyperparameters are changed even slightly.
