@@ -8,12 +8,12 @@
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.11-EE4C2C.svg)](https://pytorch.org/)
 [![Datasets](https://img.shields.io/badge/Datasets-BreakHis%20%7C%20BACH-green.svg)](#datasets)
-[![Paper](https://img.shields.io/badge/Paper-PDF-red.svg)](paper/Beyond_Belief_Leakage-Aware_Benchmark_of_Dempster-Shafer_Bayesian_Fuzzy_and_Learned_Snapshot_Fusion_for_Few-Shot_Breast_Histopathology.pdf)
+![Paper](https://img.shields.io/badge/Paper-Under%20Review-orange.svg)
 
 **Talha Khalid · Ashfaq Ahmad · Iqra Javed**
 University of Management and Technology (UMT), Lahore, Pakistan
 
-**Repository:** `https://github.com/[USERNAME]/[REPOSITORY]` *(placeholder: replace it with the public URL before publication)*
+**Repository:** [https://github.com/TalhaK-20/BeyondBelief-FewShot-Breast-Histopathology](https://github.com/TalhaK-20/BeyondBelief-FewShot-Breast-Histopathology)
 
 </div>
 
@@ -52,7 +52,7 @@ Pani et al. (CVIP) proposed a prototype-based few-shot classifier for breast his
 
 This repository contains a **critical audit** of that implementation and a **corrected, leakage-aware pipeline**. The pipeline is then used as a controlled testbed to compare 14 snapshot-fusion strategies on two public datasets. The work has four parts:
 
-1. **Audit.** 20 loopholes found in the released notebook, each with its fix (`vit-snapshot_loopholes.txt`).
+1. **Audit.** 20 loopholes found in the released notebook, each with its fix ([`vit-snapshot - base paper loopholes.txt`](vit-snapshot%20-%20base%20paper%20loopholes.txt)).
 2. **Corrected pipeline.** Real embeddings instead of logits, a partially frozen backbone, seeding, and separate query and test reporting.
 3. **Three fusion families:**
    - **RW-DSFormer:** reliability-discounted DS fusion with 5 combination rules.
@@ -64,7 +64,7 @@ This repository contains a **critical audit** of that implementation and a **cor
 
 ## Architecture
 
-![Pipeline](paper/figures/fig1_architecture.png)
+![Pipeline](output/architecture.png)
 
 | Component | Setting |
 |---|---|
@@ -87,7 +87,7 @@ This repository contains a **critical audit** of that implementation and a **cor
 
 ## Loopholes fixed (summary)
 
-The full list is in `vit-snapshot_loopholes.txt` and in the first markdown cell of the notebook.
+The full list is in [`vit-snapshot - base paper loopholes.txt`](vit-snapshot%20-%20base%20paper%20loopholes.txt) and in the first markdown cell of the notebook.
 
 | ID | Problem in the original notebook | Fix |
 |---|---|---|
@@ -127,7 +127,7 @@ These issues are still present in `BeyondBelief_SnapshotFusion_Benchmark.ipynb`.
 | [BreakHis](https://web.inf.ufpr.br/vri/databases/breast-cancer-histopathological-database-breakhis/) | Spanhol et al., IEEE TBME 2016 | 7,909 (40×/100×/200×/400× pooled) | benign / malignant | 1,736 / 3,801 | 744 / 1,628 | 10 | 5,527 |
 | [BACH (ICIAR 2018)](https://iciar2018-challenge.grand-challenge.org/Dataset/) ([Zenodo](https://zenodo.org/records/3632035)) | Aresta et al., MedIA 2019 | 400 labelled photos | Normal+Benign → benign; InSitu+Invasive → malignant | 141 / 140 | 59 / 60 | 10 | 271 |
 
-- **Splits:** stratified 70/30 per class with seed 42. The split folders are `BreakHis_AllMag_split/` and `BACH_AllClass_split/`.
+- **Splits:** stratified 70/30 per class with seed 42. The notebook creates the split folders `BreakHis_AllMag_split/` and `BACH_AllClass_split/` locally (they are not committed).
 - **Kaggle mirror used for BreakHis:** `waseemalastal/breakhist-breast-cancer-histopathological-dataset`.
 - **Preprocessing:** images are resized to 224×224 and normalised with mean = std = 0.5.
 - The datasets are not redistributed. Download them from the official sources and follow their licences.
@@ -188,7 +188,7 @@ The 14 criteria are listed in Table IX of the paper. This study has two gaps: it
 
 ### Figures
 
-All figures are in `output/`. The versions used in the paper are in `paper/figures/`.
+All figures are in [`output/`](output/). `output/architecture.png` is the pipeline diagram used in the paper.
 
 | File | Content |
 |---|---|
@@ -218,19 +218,15 @@ All figures are in `output/`. The versions used in the paper are in `paper/figur
 ## Repository structure
 
 ```
-completed/
-├── BeyondBelief_SnapshotFusion_Benchmark.ipynb        # corrected, executed notebook (all experiments)
-├── vit-snapshot_loopholes.txt      # audit of the original notebook (20 issues)
+BeyondBelief-FewShot-Breast-Histopathology/
+├── BeyondBelief_SnapshotFusion_Benchmark.ipynb   # corrected, executed notebook (all experiments)
+├── vit-snapshot - base paper loopholes.txt       # audit of the base paper's notebook (20 issues)
+├── output/                                       # all generated figures + architecture diagram
 ├── README.md
-├── LICENSE                         # MIT licence
-├── BreakHis_AllMag_split/          # seeded 70/30 split (Train/Test × benign/malignant)
-├── BACH_AllClass_split/            # seeded 70/30 split (symlinks; see R7)
-├── output/                         # all generated figures
-└── paper/
-    ├── Beyond_Belief_Leakage-Aware_Benchmark_of_Dempster-Shafer_Bayesian_Fuzzy_and_Learned_Snapshot_Fusion_for_Few-Shot_Breast_Histopathology.docx
-    ├── Beyond_Belief_Leakage-Aware_Benchmark_of_Dempster-Shafer_Bayesian_Fuzzy_and_Learned_Snapshot_Fusion_for_Few-Shot_Breast_Histopathology.pdf
-    └── figures/                    # paper figures (architecture, results, ROC, XAI)
+└── LICENSE                                       # MIT licence
 ```
+
+Created locally when the notebook runs (not committed): `BreakHis_AllMag_split/` and `BACH_AllClass_split/` (seeded 70/30 splits).
 
 ## How to reproduce
 
